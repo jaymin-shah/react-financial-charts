@@ -1,32 +1,38 @@
 import * as React from "react";
 import {
-    getStrokeDasharrayCanvas,
+    // getStrokeDasharrayCanvas,
     getMouseCanvas,
     GenericChartComponent,
     strokeDashTypes,
 } from "@react-financial-charts/core";
 
-interface BrushProps {
+interface MeasurementProps {
     readonly enabled: boolean;
     readonly onBrush: ({ start, end }: any, moreProps: any) => void;
     readonly type?: "1D" | "2D";
     readonly strokeStyle?: string;
     readonly fillStyle?: string;
-    readonly interactiveState: object;
+    readonly interactiveState?: object;
     readonly strokeDashArray?: strokeDashTypes;
     readonly fillOpacity?: number;
     readonly strokeOpacity?: number;
+    readonly textFillStyle?: string;
+    readonly fillStyleGain?: string;
+    readonly fillStyleLoss?: string;
 }
 
-interface BrushState {
+interface MeasurementState {
     end?: any;
     rect: any | null;
     selected?: boolean;
     start?: any;
     x1y1?: any;
+    difference?: any;
+    percentage?: any;
+    isComplete?: boolean;
 }
 
-export class Brush extends React.Component<BrushProps, BrushState> {
+export class Measurement extends React.Component<MeasurementProps, MeasurementState> {
     public static defaultProps = {
         type: "2D",
         strokeStyle: "#000000",
@@ -34,11 +40,12 @@ export class Brush extends React.Component<BrushProps, BrushState> {
         strokeDashArray: "ShortDash",
         fillOpacity: 0.3,
         strokeOpacity: 1,
+        textFillStyle: "#fff",
+        fillStyleGain: "#74e244", // "#00ff00",
+        fillStyleLoss: "#e87975", //"#ff0000",
     };
 
-    private zoomHappening?: boolean;
-
-    public constructor(props: BrushProps) {
+    public constructor(props: MeasurementProps) {
         super(props);
 
         this.terminate = this.terminate.bind(this);
@@ -48,7 +55,6 @@ export class Brush extends React.Component<BrushProps, BrushState> {
     }
 
     public terminate() {
-        this.zoomHappening = false;
         this.setState({
             x1y1: null,
             start: null,
@@ -100,24 +106,42 @@ export class Brush extends React.Component<BrushProps, BrushState> {
 
         const { x, y, height, width } = rect;
         const {
-            strokeStyle = Brush.defaultProps.strokeStyle,
-            fillStyle = Brush.defaultProps.fillStyle,
-            strokeDashArray,
-            strokeOpacity = Brush.defaultProps.strokeOpacity,
-            fillOpacity = Brush.defaultProps.fillOpacity,
+            strokeStyle = Measurement.defaultProps.strokeStyle,
+            // strokeDashArray,
+            strokeOpacity = Measurement.defaultProps.strokeOpacity,
+            fillOpacity = Measurement.defaultProps.fillOpacity,
+            textFillStyle = Measurement.defaultProps.textFillStyle,
+            fillStyleGain = Measurement.defaultProps.fillStyleGain,
+            fillStyleLoss = Measurement.defaultProps.fillStyleLoss,
         } = this.props;
 
-        const dashArray = getStrokeDasharrayCanvas(strokeDashArray);
+        // const dashArray = getStrokeDasharrayCanvas(strokeDashArray);
         ctx.strokeStyle = this.hexToRGBA(strokeStyle, strokeOpacity);
-        ctx.fillStyle = this.hexToRGBA(fillStyle, fillOpacity);
-        ctx.setLineDash(dashArray);
+
+        if (this.state.difference > 0) {
+            ctx.fillStyle = this.hexToRGBA(fillStyleGain, fillOpacity);
+        } else {
+            ctx.fillStyle = this.hexToRGBA(fillStyleLoss, fillOpacity);
+        }
+
+        // ctx.setLineDash(dashArray);
         ctx.beginPath();
         ctx.fillRect(x, y, width, height);
         ctx.strokeRect(x, y, width, height);
+
+        if (this.state.difference) {
+            const { end, start } = this.state;
+            const barCount = end.item.idx.index - start.item.idx.index;
+            ctx.fillStyle = textFillStyle;
+            ctx.font = "16px sans serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(`${this.state.difference} (${this.state.percentage}%)`, x + width / 2, y + height / 2);
+            ctx.fillText(`${barCount} bars`, x + width / 2, y + 20 + height / 2);
+        }
     };
 
     private readonly handleZoomStart = (_: React.MouseEvent, moreProps: any) => {
-        this.zoomHappening = false;
         const {
             mouseXY: [, mouseY],
             currentItem,
@@ -140,11 +164,9 @@ export class Brush extends React.Component<BrushProps, BrushState> {
     };
 
     private readonly handleDrawSquare = (_: React.MouseEvent, moreProps: any) => {
-        if (this.state.x1y1 == null) {
+        if (this.state.x1y1 == null || this.state.isComplete) {
             return;
         }
-
-        this.zoomHappening = true;
 
         const {
             mouseXY: [, mouseY],
@@ -165,8 +187,13 @@ export class Brush extends React.Component<BrushProps, BrushState> {
         const height = Math.abs(y2 - y1);
         const width = Math.abs(x2 - x1);
 
+        const difference = yScale.invert(mouseY) - yScale.invert(y1);
+        const percentage = (difference * 100) / yScale.invert(y1);
+
         this.setState({
             selected: true,
+            difference: difference.toFixed(2),
+            percentage: percentage.toFixed(2),
             end: {
                 item: currentItem,
                 xValue: xAccessor(currentItem),
@@ -182,17 +209,15 @@ export class Brush extends React.Component<BrushProps, BrushState> {
     };
 
     private readonly handleZoomComplete = (_: React.MouseEvent, moreProps: any) => {
-        if (this.zoomHappening) {
-            const { onBrush } = this.props;
-            if (onBrush !== undefined) {
-                const { start, end } = this.state;
-                onBrush({ start, end }, moreProps);
-            }
-        }
-
-        this.setState({
-            selected: false,
-            rect: null,
-        });
+        this.setState(
+            (prevState) => ({
+                isComplete: !prevState.isComplete,
+            }),
+            () => {
+                if (!this.state.isComplete) {
+                    this.terminate();
+                }
+            },
+        );
     };
 }
